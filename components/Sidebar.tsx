@@ -11,6 +11,9 @@ type Props = {
   onToggle: (source: CameraSource) => void;
   showStarlink: boolean;
   onToggleStarlink: () => void;
+  showBases: boolean;
+  onToggleBases: () => void;
+  basesCount: number | null;
 };
 
 function groupedSources(): Array<[CameraRegion, CameraSource[]]> {
@@ -44,6 +47,9 @@ export default function Sidebar({
   onToggle,
   showStarlink,
   onToggleStarlink,
+  showBases,
+  onToggleBases,
+  basesCount,
 }: Props) {
   const isMobile = useIsMobile();
   const [open, setOpen] = useState(true);
@@ -242,6 +248,52 @@ export default function Sidebar({
           />
           <span style={{ flex: 1, fontSize: 13 }}>Starlink</span>
           <span style={{ fontSize: 11, color: '#94a3b8' }}>~10k</span>
+        </label>
+      </div>
+
+      <div style={{ marginTop: 4, borderTop: '1px solid #1e293b', paddingTop: 6 }}>
+        <div
+          style={{
+            fontSize: 10,
+            fontWeight: 700,
+            letterSpacing: 0.6,
+            color: '#64748b',
+            textTransform: 'uppercase',
+            margin: '4px 0 2px',
+          }}
+        >
+          Other
+        </div>
+        <label
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            padding: '4px 0',
+            cursor: 'pointer',
+            opacity: showBases ? 1 : 0.5,
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={showBases}
+            onChange={onToggleBases}
+            style={{ accentColor: '#ef4444' }}
+          />
+          <span
+            style={{
+              width: 10,
+              height: 10,
+              background: '#ef4444',
+              border: '1.5px solid #fff',
+              display: 'inline-block',
+              flexShrink: 0,
+            }}
+          />
+          <span style={{ flex: 1, fontSize: 13 }}>Military bases</span>
+          <span style={{ fontSize: 11, color: '#94a3b8' }}>
+            {basesCount !== null ? basesCount.toLocaleString() : showBases ? '…' : ''}
+          </span>
         </label>
       </div>
 

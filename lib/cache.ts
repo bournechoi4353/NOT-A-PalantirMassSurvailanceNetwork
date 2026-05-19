@@ -11,6 +11,7 @@ const TTL_MS: Record<CameraSource, number> = {
   on511: 5 * 60 * 1000,
   ab511: 5 * 60 * 1000,
   mdot: 5 * 60 * 1000,
+  ny511: 5 * 60 * 1000,
 };
 
 const cache = new Map<CameraSource, Entry>();

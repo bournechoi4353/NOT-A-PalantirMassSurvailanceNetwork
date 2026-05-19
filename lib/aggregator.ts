@@ -8,6 +8,7 @@ import { fetchDriveBcCameras } from './sources/drivebc';
 import { fetchOntario511Cameras } from './sources/on511';
 import { fetchAlberta511Cameras } from './sources/ab511';
 import { fetchMdotCameras } from './sources/mdot';
+import { fetchNy511Cameras } from './sources/ny511';
 
 type Result = { cameras: Camera[]; errors: Record<string, string> };
 
@@ -20,6 +21,7 @@ const SOURCES: Record<CameraSource, () => Promise<Camera[]>> = {
   on511: fetchOntario511Cameras,
   ab511: fetchAlberta511Cameras,
   mdot: fetchMdotCameras,
+  ny511: fetchNy511Cameras,
 };
 
 export async function fetchAllCameras(): Promise<Result> {

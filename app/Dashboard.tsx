@@ -25,6 +25,8 @@ export default function Dashboard({ cameras, errors }: Props) {
   );
   const [enabled, setEnabled] = useState<Set<CameraSource>>(allSources);
   const [showStarlink, setShowStarlink] = useState(false);
+  const [showBases, setShowBases] = useState(false);
+  const [basesCount, setBasesCount] = useState<number | null>(null);
 
   const toggle = (src: CameraSource) => {
     setEnabled((prev) => {
@@ -37,7 +39,13 @@ export default function Dashboard({ cameras, errors }: Props) {
 
   return (
     <main style={{ position: 'relative' }}>
-      <CameraMap cameras={cameras} enabledSources={enabled} showStarlink={showStarlink} />
+      <CameraMap
+        cameras={cameras}
+        enabledSources={enabled}
+        showStarlink={showStarlink}
+        showBases={showBases}
+        onBasesCount={setBasesCount}
+      />
       <Sidebar
         cameras={cameras}
         errors={errors}
@@ -45,6 +53,9 @@ export default function Dashboard({ cameras, errors }: Props) {
         onToggle={toggle}
         showStarlink={showStarlink}
         onToggleStarlink={() => setShowStarlink((s) => !s)}
+        showBases={showBases}
+        onToggleBases={() => setShowBases((s) => !s)}
+        basesCount={basesCount}
       />
       <AttributionFooter />
     </main>

@@ -6,7 +6,8 @@ export type CameraSource =
   | 'drivebc'
   | 'on511'
   | 'ab511'
-  | 'mdot';
+  | 'mdot'
+  | 'ny511';
 
 export type CameraRegion = 'us' | 'europe' | 'apac' | 'curated';
 
@@ -22,6 +23,14 @@ export type Camera = {
   externalUrl?: string;
   refreshSeconds?: number;
   city?: string;
+  country?: string;
+};
+
+export type MilitaryBase = {
+  id: string; // Wikidata QID URL
+  name: string;
+  lat: number;
+  lon: number;
   country?: string;
 };
 
@@ -75,6 +84,13 @@ export const SOURCE_META: Record<CameraSource, SourceMeta> = {
     region: 'us',
     attribution: '© Government of Alberta — Open Government Licence – Alberta',
     attributionUrl: 'https://511.alberta.ca/',
+  },
+  ny511: {
+    label: '511NY (New York)',
+    color: '#22d3ee',
+    region: 'us',
+    attribution: '511NY — NYSDOT traveler information',
+    attributionUrl: 'https://511ny.org/',
   },
   windy: {
     label: 'Windy Webcams',

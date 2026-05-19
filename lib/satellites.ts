@@ -61,16 +61,18 @@ export function propagateAt(sat: Satellite, date: Date): SatPosition | null {
 }
 
 // Sample positions across [centerTime - halfWindowMs, centerTime + halfWindowMs]
-// every stepMs and return as [lng, lat] arrays grouped into sub-paths that
-// don't cross the antimeridian. (deck.gl PathLayer expects [x, y] = [lng, lat].)
-export function groundTrackSegments(
+// every stepMs and return as [lng, lat, altMeters] arrays grouped into sub-paths
+// that don't cross the antimeridian. Altitude is included so the deck.gl
+// PathLayer traces the orbit *through* the satellite dot on a globe view; on
+// a 2D map the altitude component is ignored.
+export function orbitTrackSegments(
   sat: Satellite,
   centerTime: Date,
   halfWindowMs = 45 * 60 * 1000,
   stepMs = 30 * 1000,
-): Array<Array<[number, number]>> {
-  const segments: Array<Array<[number, number]>> = [];
-  let current: Array<[number, number]> = [];
+): Array<Array<[number, number, number]>> {
+  const segments: Array<Array<[number, number, number]>> = [];
+  let current: Array<[number, number, number]> = [];
   let prevLng: number | null = null;
   const start = centerTime.getTime() - halfWindowMs;
   const end = centerTime.getTime() + halfWindowMs;
@@ -87,7 +89,7 @@ export function groundTrackSegments(
       if (current.length > 1) segments.push(current);
       current = [];
     }
-    current.push([pos.lng, pos.lat]);
+    current.push([pos.lng, pos.lat, pos.altKm * 1000]);
     prevLng = pos.lng;
   }
   if (current.length > 1) segments.push(current);
