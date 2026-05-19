@@ -47,30 +47,32 @@ Get the camera count from ~4 k to ~15 k+ and expand geography to 5 continents. S
 
 No API keys, no signed agreements, no scraping. Same code shape as existing sources in [lib/sources/](lib/sources/).
 
-| Source | Endpoint | Format | Approx count | Notes |
-| --- | --- | --- | --- | --- |
-| **MDOT CHART** (Maryland) | `chart.maryland.gov/DataFeeds/GetCamerasJson` | JSON | ~400 | Fills US East Coast gap; explicit "we don't retain footage" |
-| **Hong Kong TD** | `https://tdcctv.data.one.gov.hk/<KEY>.JPG` (no auth) + camera metadata CSV | JPEG, 320×240, 2-min refresh | ~200 | Trivial: snapshot-only, no live video |
-| **Transport for NSW** | `opendata.transport.nsw.gov.au/.../livetrafficcamera.json` | GeoJSON | ~500 | CC-BY Attribution — add to credits footer |
-| **Germany Autobahn** | `verkehr.autobahn.de/o/autobahn/{road}/services/webcam` (enumerate A1–A99) | JSON, some with HLS | ~150 | Same fan-out pattern as Caltrans districts; filter `isBlocked` |
-| **DriveBC** | Open511-aligned webcam API | JSON | ~500 | Mountain pass cams; Open Government License |
+| Source | Status | Cameras (verified) | Notes |
+| --- | --- | --- | --- |
+| **DriveBC** | ✅ working | 1 034 | `lib/sources/drivebc.ts`. Bundled CSV downloaded from `catalogue.data.gov.bc.ca` (resource `webcams.csv`). Note: the CSV's `links_imageDisplay` column now serves a placeholder PNG for every id; we build snapshot URLs from `https://www.drivebc.ca/images/{id}.jpg` instead (verified live). |
+| **Ontario 511** | ✅ working | 1 651 | `lib/sources/on511.ts`. One pin per view (931 cameras × multiple views). Snapshot URL: `https://511on.ca/map/Cctv/{ViewId}?image` returns image/jpeg. |
+| **Alberta 511** | ✅ working | 599 | `lib/sources/ab511.ts`. One pin per *enabled* view; same snapshot pattern as Ontario. |
+| **MDOT CHART** (Maryland) | ✅ working | 550 | `lib/sources/mdot.ts`. No static-image endpoint exists — uses `publicVideoURL` as iframe embed (the canonical HLS player at chart.maryland.gov). Direct m3u8 fetch from our container timed out, so we don't promise inline playback from our server; the embed page works in user browsers. |
+| **Germany Autobahn** | ⚠ TODO | 0 | `verkehr.autobahn.de/o/autobahn/{road}/services/webcam` returns `{"webcam":[]}` for all 109 roads listed by the `/o/autobahn` index (probed May 2026). Other services (`/warning`, `/closure`) return data, so the API is alive but the webcam feature appears deprecated or temporarily emptied. No adapter written. |
 
-**Result:** +1 750 cams across 4 new countries; no `.env` changes required for users to run the project.
+**Actual result:** 7 948 cams in the dashboard (was 4 114 with just tfl + caltrans + earthcam, before windy is configured). +3 834 cameras, zero signups, zero `.env` changes.
 
-### Phase 3b — Free-key batch (iPeak family) *(2 days)*
+*(Hong Kong TD and Transport for NSW originally listed here turned out to require signup — see 3b.)*
 
-Most US 511 systems are built on the same iPeak / Compusult template — same REST shape, free key per state, ~10 req/min throttle. Write one shared client, plug in keys per source.
+### Phase 3b — Signup-required batch *(2 days)*
+
+All free signups. Most US 511 systems share the iPeak / Compusult template — same REST shape, ~10 req/min throttle. Write one shared client, plug in credentials per source. (Ontario + Alberta were originally here but turned out keyless — moved to 3a.)
 
 | Source | Endpoint shape | Approx count | Notes |
 | --- | --- | --- | --- |
 | **511NY** | `511ny.org/api/getcameras?key=...` | ~1 500 | Includes Thruway |
 | **511GA** | `511ga.org/api/v2/get/cameras?key=...` | ~1 200 | Includes HLS `VideoUrl` (genuine live, like Caltrans) |
-| **511LA** | `511la.org/api/v2/get/cameras?key=...` | ~600 | |
-| **Ontario 511** | `511on.ca/api/v2/get/cameras?key=...` | ~700 | |
-| **Alberta 511** | iPeak REST | ~400 | |
-| **WSDOT** (Washington) | `wsdot.wa.gov/Traffic/api/HighwayCameras/...?AccessCode=...` | ~600 | Slightly different shape; JPEG snapshots only |
+| **511LA** | `511la.org/api/v2/get/cameras?key=...` | ~600 | Verify if keyless first (same family as Ontario/Alberta) |
+| **WSDOT** (Washington) | `wsdot.wa.gov/Traffic/api/HighwayCameras/...?AccessCode=...` | ~600 | Slightly different shape; JPEG snapshots only. Email signup, ~24h turnaround — request first |
+| **Hong Kong TD** *(moved from 3a)* | `https://tdcctv.data.one.gov.hk/...` + metadata CSV | JPEG, 320×240, 2-min refresh | ~200 | Snapshot-only. Register on data.gov.hk |
+| **Transport for NSW** *(moved from 3a)* | `opendata.transport.nsw.gov.au/.../livetrafficcamera.json` | GeoJSON | ~500 | CC-BY Attribution. Register an app at opendata.transport.nsw.gov.au |
 
-Shared client lives in `lib/sources/_ipeak.ts` and each state is a thin wrapper (state code + key). Document keys in `.env.example`. **Result:** +5 000 cams.
+Shared client lives in `lib/sources/_ipeak.ts` (only for the 511 family); HK TD and NSW need their own one-off adapters. Document keys in `.env.example`. **Result:** +4 600 cams once all signups complete.
 
 ### Phase 3c — Curated public webcams *(1–2 days)*
 

@@ -8,10 +8,12 @@ import 'leaflet/dist/leaflet.css';
 import type { Camera, CameraSource } from '@/lib/types';
 import { SOURCE_META } from '@/lib/types';
 import CameraPopup from './CameraPopup';
+import SatelliteOverlay from './SatelliteOverlay';
 
 type Props = {
   cameras: Camera[];
   enabledSources: Set<CameraSource>;
+  showStarlink: boolean;
 };
 
 const iconCache = new Map<string, L.DivIcon>();
@@ -52,7 +54,7 @@ function clusterIcon(cluster: L.MarkerCluster): L.DivIcon {
   });
 }
 
-export default function CameraMap({ cameras, enabledSources }: Props) {
+export default function CameraMap({ cameras, enabledSources, showStarlink }: Props) {
   const visible = useMemo(
     () => cameras.filter((c) => enabledSources.has(c.source)),
     [cameras, enabledSources],
@@ -87,6 +89,7 @@ export default function CameraMap({ cameras, enabledSources }: Props) {
           </Marker>
         ))}
       </MarkerClusterGroup>
+      <SatelliteOverlay show={showStarlink} />
     </MapContainer>
   );
 }

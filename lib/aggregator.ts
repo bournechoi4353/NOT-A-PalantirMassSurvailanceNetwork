@@ -4,6 +4,10 @@ import { fetchTflCameras } from './sources/tfl';
 import { fetchCaltransCameras } from './sources/caltrans';
 import { fetchWindyCameras } from './sources/windy';
 import { fetchEarthcamFeeds } from './sources/earthcam';
+import { fetchDriveBcCameras } from './sources/drivebc';
+import { fetchOntario511Cameras } from './sources/on511';
+import { fetchAlberta511Cameras } from './sources/ab511';
+import { fetchMdotCameras } from './sources/mdot';
 
 type Result = { cameras: Camera[]; errors: Record<string, string> };
 
@@ -12,6 +16,10 @@ const SOURCES: Record<CameraSource, () => Promise<Camera[]>> = {
   caltrans: fetchCaltransCameras,
   windy: fetchWindyCameras,
   earthcam: fetchEarthcamFeeds,
+  drivebc: fetchDriveBcCameras,
+  on511: fetchOntario511Cameras,
+  ab511: fetchAlberta511Cameras,
+  mdot: fetchMdotCameras,
 };
 
 export async function fetchAllCameras(): Promise<Result> {

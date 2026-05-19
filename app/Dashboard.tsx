@@ -6,6 +6,7 @@ import type { Camera, CameraSource } from '@/lib/types';
 import { SOURCE_META } from '@/lib/types';
 import Sidebar from '@/components/Sidebar';
 import MapSkeleton from '@/components/MapSkeleton';
+import AttributionFooter from '@/components/AttributionFooter';
 
 const CameraMap = dynamic(() => import('@/components/CameraMap'), {
   ssr: false,
@@ -23,6 +24,7 @@ export default function Dashboard({ cameras, errors }: Props) {
     [],
   );
   const [enabled, setEnabled] = useState<Set<CameraSource>>(allSources);
+  const [showStarlink, setShowStarlink] = useState(false);
 
   const toggle = (src: CameraSource) => {
     setEnabled((prev) => {
@@ -35,13 +37,16 @@ export default function Dashboard({ cameras, errors }: Props) {
 
   return (
     <main style={{ position: 'relative' }}>
-      <CameraMap cameras={cameras} enabledSources={enabled} />
+      <CameraMap cameras={cameras} enabledSources={enabled} showStarlink={showStarlink} />
       <Sidebar
         cameras={cameras}
         errors={errors}
         enabledSources={enabled}
         onToggle={toggle}
+        showStarlink={showStarlink}
+        onToggleStarlink={() => setShowStarlink((s) => !s)}
       />
+      <AttributionFooter />
     </main>
   );
 }
