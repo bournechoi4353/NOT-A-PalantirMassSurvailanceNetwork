@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
+import * as THREE from 'three';
 import { feature } from 'topojson-client';
 import type { Topology } from 'topojson-specification';
 import type { Feature, FeatureCollection } from 'geojson';
@@ -9,6 +10,7 @@ import type { Camera, CameraSource, MilitaryBase } from '@/lib/types';
 import { SOURCE_META } from '@/lib/types';
 import CameraPopup from './CameraPopup';
 import { useStarlinkPositions } from './SatelliteOverlay';
+import type { SatPosition } from '@/lib/satellites';
 
 // react-globe.gl uses three.js + DOM — must be client-only in Next.js.
 const Globe = dynamic(() => import('react-globe.gl'), { ssr: false });
@@ -32,12 +34,71 @@ const BORDER_HEX = '#64748b';
 const ADMIN1_BORDER_HEX = '#475569';
 
 const SAT_ALT_FRACTION = 550 / 6371;
-const EARTH_RADIUS_M = 6_371_000;
+
+// three-globe renders everything in a sphere of radius 100 (GLOBE_RADIUS).
+// We position satellite sprites in that same space ourselves.
+const GLOBE_RADIUS = 100;
+const DEG2RAD = Math.PI / 180;
+function polar2Cartesian(lat: number, lng: number, altFraction: number) {
+  const phi = (90 - lat) * DEG2RAD;
+  const theta = (90 - lng) * DEG2RAD;
+  const r = GLOBE_RADIUS * (1 + altFraction);
+  return [
+    r * Math.sin(phi) * Math.cos(theta),
+    r * Math.cos(phi),
+    r * Math.sin(phi) * Math.sin(theta),
+  ] as const;
+}
 
 type CamPoint = Camera & { __kind: 'cam' };
 type BasePoint = MilitaryBase & { __kind: 'base' };
-type SatPoint = { __kind: 'sat'; id: string; name: string; lat: number; lon: number };
-type AnyPoint = CamPoint | BasePoint | SatPoint;
+type AnyPoint = CamPoint | BasePoint;
+
+const CAM_ALT = 0.004;
+const CAM_RADIUS = 0.16;
+const BASE_RADIUS = 0.26;
+
+// Satellites render as a single flat-square THREE.Points sprite cloud — one
+// draw call, no per-point geometry (cameras/bases use three-globe's cylinder
+// points; satellites move every 2s so a cheap sprite buffer is far faster and
+// keeps them off the static cam/base layer entirely).
+type SatDatum = { sats: SatPosition[] };
+function buildSatPoints(sats: SatPosition[]): THREE.Points {
+  const geom = new THREE.BufferGeometry();
+  const positions = new Float32Array(Math.max(sats.length, 1) * 3);
+  geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  const mat = new THREE.PointsMaterial({
+    color: 0x38f8f8,
+    size: 2.4, // pixels (sizeAttenuation off → constant on-screen square)
+    sizeAttenuation: false,
+    transparent: true,
+    opacity: 0.9,
+    depthWrite: false, // occluded by the opaque globe via depthTest, no z-fight
+  });
+  const pts = new THREE.Points(geom, mat);
+  pts.frustumCulled = false;
+  updateSatPoints(pts, sats);
+  return pts;
+}
+function updateSatPoints(obj: THREE.Object3D, sats: SatPosition[]) {
+  const pts = obj as THREE.Points;
+  const geom = pts.geometry as THREE.BufferGeometry;
+  let attr = geom.getAttribute('position') as THREE.BufferAttribute | undefined;
+  if (!attr || attr.array.length < sats.length * 3) {
+    attr = new THREE.BufferAttribute(new Float32Array(Math.max(sats.length, 1) * 3), 3);
+    geom.setAttribute('position', attr);
+  }
+  const arr = attr.array as Float32Array;
+  for (let i = 0; i < sats.length; i++) {
+    const [x, y, z] = polar2Cartesian(sats[i].lat, sats[i].lng, SAT_ALT_FRACTION);
+    arr[i * 3] = x;
+    arr[i * 3 + 1] = y;
+    arr[i * 3 + 2] = z;
+  }
+  geom.setDrawRange(0, sats.length);
+  attr.needsUpdate = true;
+  geom.computeBoundingSphere();
+}
 
 export default function CameraMap({
   cameras,
@@ -55,8 +116,10 @@ export default function CameraMap({
   const [basesError, setBasesError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Camera | null>(null);
   const [selectedBase, setSelectedBase] = useState<MilitaryBase | null>(null);
-  const [selectedSatId, setSelectedSatId] = useState<string | null>(null);
   const inflightRef = useRef(false);
+  // Pause satellite propagation while the user is dragging the globe — the
+  // 60 Hz camera move is starving the main thread of cycles for SGP4.
+  const draggingRef = useRef(false);
 
   const visible = useMemo(
     () => cameras.filter((c) => enabledSources.has(c.source)),
@@ -125,26 +188,19 @@ export default function CameraMap({
     return tagged;
   }, [countries, admin1]);
 
-  const { positions: satellites, getTrack } = useStarlinkPositions(showStarlink);
+  const { positions: satellites } = useStarlinkPositions(showStarlink, draggingRef);
 
-  const satTracks = useMemo(() => {
-    if (!showStarlink || !selectedSatId) return [];
-    const segments = getTrack(selectedSatId);
-    if (!segments) return [];
-    return segments.map((seg) =>
-      seg.map(([lng, lat, altMeters]) => [lng, lat, altMeters / EARTH_RADIUS_M] as [
-        number,
-        number,
-        number,
-      ]),
-    );
-  }, [showStarlink, selectedSatId, getTrack, satellites]);
-
-  useEffect(() => {
-    if (selectedSatId && !satellites.some((s) => s.id === selectedSatId)) {
-      setSelectedSatId(null);
-    }
-  }, [satellites, selectedSatId]);
+  // Single stable datum for the satellite sprite layer. We mutate `.sats` in
+  // place and hand three-globe a fresh single-element array each tick: the new
+  // array ref makes react-globe re-run the layer, but the stable element makes
+  // it call customThreeObjectUpdate (in-place buffer write) instead of
+  // rebuilding/leaking the THREE.Points object.
+  const satDatumRef = useRef<SatDatum>({ sats: [] });
+  satDatumRef.current.sats = satellites;
+  const satLayerData = useMemo<SatDatum[]>(
+    () => (showStarlink && satellites.length > 0 ? [satDatumRef.current] : []),
+    [showStarlink, satellites],
+  );
 
   // Size the globe to the container.
   useEffect(() => {
@@ -157,52 +213,106 @@ export default function CameraMap({
     return () => ro.disconnect();
   }, []);
 
-  // Build the three datasets separately so each one's object references stay
-  // stable when only one of them updates. react-globe.gl diffs htmlElementsData
-  // by object identity — recreating refs means recreating DOM elements, which
-  // is the #1 perf cliff at scale (especially with satellites refreshing 1 Hz).
-  const taggedCams: AnyPoint[] = useMemo(
+  // Pause satellite propagation during ANY camera interaction — drag, wheel
+  // zoom, AND the inertia/damping spin that continues after release. A single
+  // "settle" timer covers all three: each interaction event marks us busy and
+  // (re)arms a timer that resumes propagation ~450ms after the last event,
+  // which is past OrbitControls' damping decay (dampingFactor 0.1 ≈ ~300ms+).
+  const settleTimerRef = useRef<number | null>(null);
+  const bumpInteraction = useCallback(() => {
+    draggingRef.current = true;
+    if (settleTimerRef.current !== null) window.clearTimeout(settleTimerRef.current);
+    settleTimerRef.current = window.setTimeout(() => {
+      draggingRef.current = false;
+      settleTimerRef.current = null;
+    }, 450);
+  }, []);
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const down = () => {
+      draggingRef.current = true;
+      if (settleTimerRef.current !== null) {
+        window.clearTimeout(settleTimerRef.current);
+        settleTimerRef.current = null;
+      }
+    };
+    el.addEventListener('pointerdown', down);
+    el.addEventListener('wheel', bumpInteraction, { passive: true });
+    window.addEventListener('pointerup', bumpInteraction);
+    window.addEventListener('pointercancel', bumpInteraction);
+    return () => {
+      el.removeEventListener('pointerdown', down);
+      el.removeEventListener('wheel', bumpInteraction);
+      window.removeEventListener('pointerup', bumpInteraction);
+      window.removeEventListener('pointercancel', bumpInteraction);
+      if (settleTimerRef.current !== null) window.clearTimeout(settleTimerRef.current);
+    };
+  }, [bumpInteraction]);
+
+  // Cameras + bases render on three-globe's GPU pointsData layer. Previously
+  // these were ~20k DOM nodes on htmlElementsData (CSS3DRenderer transformed
+  // every one each frame → ~1fps on drag); GPU points are one draw call.
+  // Satellites are NOT here — they live on their own sprite layer (see
+  // satLayerData) so their 2s updates never touch this static geometry.
+  const taggedCams = useMemo<CamPoint[]>(
     () => visible.map((c) => ({ ...c, __kind: 'cam' as const })),
     [visible],
   );
-  const taggedBases: AnyPoint[] = useMemo(
+  const taggedBases = useMemo<BasePoint[]>(
     () => (showBases ? bases.map((b) => ({ ...b, __kind: 'base' as const })) : []),
     [showBases, bases],
   );
-  // Per-satellite refs cached in a Map so each tick mutates the existing entry
-  // (lat/lng update) instead of allocating a fresh object. Otherwise the diff
-  // throws away every satellite's DOM element every second.
-  const satMapRef = useRef(new Map<string, SatPoint>());
-  const taggedSats: AnyPoint[] = useMemo(() => {
-    const map = satMapRef.current;
-    if (!showStarlink) {
-      if (map.size > 0) map.clear();
-      return [];
-    }
-    const seen = new Set<string>();
-    const out: SatPoint[] = [];
-    for (const s of satellites) {
-      seen.add(s.id);
-      let existing = map.get(s.id);
-      if (existing) {
-        existing.lat = s.lat;
-        existing.lon = s.lng;
-      } else {
-        existing = { __kind: 'sat', id: s.id, name: s.name, lat: s.lat, lon: s.lng };
-        map.set(s.id, existing);
-      }
-      out.push(existing);
-    }
-    // Drop refs for satellites that fell out of the feed.
-    for (const id of Array.from(map.keys())) {
-      if (!seen.has(id)) map.delete(id);
-    }
-    return out;
-  }, [showStarlink, satellites]);
-  const htmlPoints: AnyPoint[] = useMemo(
-    () => [...taggedCams, ...taggedBases, ...taggedSats],
-    [taggedCams, taggedBases, taggedSats],
+  const allPoints = useMemo<AnyPoint[]>(
+    () => [...taggedCams, ...taggedBases],
+    [taggedCams, taggedBases],
   );
+
+  // Stable accessor identities. The component re-renders every 2s (satellite
+  // tick); inline closures would get a new identity each time, making react-
+  // globe.gl re-digest BOTH the points layer and all ~250 polygons on every
+  // tick (and on every selection change). useCallback pins them so only the
+  // data that actually changed drives work. Only pointColor depends on state.
+  const polygonAltitude = useCallback(
+    (d: object) =>
+      ((d as Feature).properties?.__tier as string | undefined) === 'admin1'
+        ? 0.0006
+        : 0.0003,
+    [],
+  );
+  const polygonCapColor = useCallback(() => LAND_HEX, []);
+  const polygonStrokeColor = useCallback(
+    (d: object) =>
+      ((d as Feature).properties?.__tier as string | undefined) === 'admin1'
+        ? ADMIN1_BORDER_HEX
+        : BORDER_HEX,
+    [],
+  );
+  const pointLat = useCallback((d: object) => (d as AnyPoint).lat, []);
+  const pointLng = useCallback((d: object) => (d as AnyPoint).lon, []);
+  const pointAltitude = useCallback(() => CAM_ALT, []);
+  const pointRadius = useCallback(
+    (d: object) => ((d as AnyPoint).__kind === 'base' ? BASE_RADIUS : CAM_RADIUS),
+    [],
+  );
+  const pointColor = useCallback((d: object) => {
+    const p = d as AnyPoint;
+    return p.__kind === 'cam' ? SOURCE_META[p.source].color : '#ef4444';
+  }, []);
+  const onPointClick = useCallback((d: object) => {
+    const p = d as AnyPoint;
+    if (p.__kind === 'cam') {
+      setSelected(p as Camera);
+      setSelectedBase(null);
+    } else {
+      setSelectedBase(p as MilitaryBase);
+      setSelected(null);
+    }
+  }, []);
+  const onPointHover = useCallback((d: object | null) => {
+    const el = containerRef.current;
+    if (el) el.style.cursor = d ? 'pointer' : 'default';
+  }, []);
 
   return (
     <div
@@ -219,6 +329,7 @@ export default function CameraMap({
         globeImageUrl={null}
         showGlobe
         polygonsData={polygons}
+<<<<<<< HEAD
         // altitude=0 → flat surface polygons (no extruded side walls), which
         // are dramatically cheaper to render than the previous tiny-extrusion
         // versions. Borders still show via polygonStrokeColor.
@@ -320,10 +431,43 @@ export default function CameraMap({
         pathColor={() => '#67e8f9'}
         pathStroke={1.2}
         pathTransitionDuration={0}
+=======
+        polygonAltitude={polygonAltitude}
+        polygonCapColor={polygonCapColor}
+        // No side walls. At these micro-altitudes the extruded torso is
+        // invisible, but admin-1 (~294 regions, ~68k contour verts) generates
+        // ~400k+ side-wall indices rasterized every frame. Dropping sides is a
+        // pure per-frame GPU win; caps remain for the land fill. Returning
+        // undefined sets hasSide=false in three-globe, skipping torso geometry.
+        polygonSideColor={() => undefined as unknown as string}
+        polygonStrokeColor={polygonStrokeColor}
+        polygonsTransitionDuration={0}
+        // Single GPU layer for cameras + bases + satellites. Back-hemisphere
+        // points are occluded natively: the opaque globe sphere writes depth,
+        // so points behind it fail the depth test (no manual hiding needed).
+        pointsData={allPoints}
+        pointLat={pointLat}
+        pointLng={pointLng}
+        pointAltitude={pointAltitude}
+        pointRadius={pointRadius}
+        pointResolution={4}
+        pointColor={pointColor}
+        pointsTransitionDuration={0}
+        onPointClick={onPointClick}
+        onPointHover={onPointHover}
+        onZoom={bumpInteraction}
+        // Satellites: a single flat-square THREE.Points sprite cloud, updated
+        // in place every 2s. Decoupled from the cam/base points layer.
+        customLayerData={satLayerData}
+        customThreeObject={(d: object) => buildSatPoints((d as SatDatum).sats)}
+        customThreeObjectUpdate={(obj: object, d: object) =>
+          updateSatPoints(obj as THREE.Object3D, (d as SatDatum).sats)
+        }
+>>>>>>> d6826ed9ae9032560dc8256788d4dac4768fc10b
       />
 
       {showStarlink && satellites.length > 0 && (
-        <Pill tone="muted" text={`${satellites.length.toLocaleString()} Starlink · 1 Hz`} />
+        <Pill tone="muted" text={`${satellites.length.toLocaleString()} Starlink · 0.5 Hz`} />
       )}
       {showBases && (basesLoading || basesError) && (
         <Pill
