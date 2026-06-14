@@ -219,16 +219,17 @@ export default function CameraMap({
         globeImageUrl={null}
         showGlobe
         polygonsData={polygons}
-        polygonAltitude={(d: object) => {
-          const tier = (d as Feature).properties?.__tier as string | undefined;
-          return tier === 'admin1' ? 0.0006 : 0.0003;
-        }}
+        // altitude=0 → flat surface polygons (no extruded side walls), which
+        // are dramatically cheaper to render than the previous tiny-extrusion
+        // versions. Borders still show via polygonStrokeColor.
+        polygonAltitude={0}
         polygonCapColor={() => LAND_HEX}
         polygonSideColor={() => LAND_HEX}
         polygonStrokeColor={(d: object) => {
           const tier = (d as Feature).properties?.__tier as string | undefined;
           return tier === 'admin1' ? ADMIN1_BORDER_HEX : BORDER_HEX;
         }}
+        polygonsTransitionDuration={0}
         htmlElementsData={htmlPoints}
         htmlLat={(d: object) => (d as AnyPoint).lat}
         htmlLng={(d: object) => (d as AnyPoint).lon}
@@ -239,34 +240,47 @@ export default function CameraMap({
         }}
         htmlElement={(d: object) => {
           const p = d as AnyPoint;
-          const el = document.createElement('div');
+          // Two-layer pattern: outer transparent "hit zone" (~16 px source)
+          // catches clicks; inner element is the actual visible dot. Since
+          // CSS3D scales both layers together, the hit area stays much larger
+          // than the dot at every zoom level — clicks register anywhere
+          // within the bigger box even when the visible dot is sub-pixel.
+          const hit = document.createElement('div');
+          hit.style.cssText = `
+            width: 16px; height: 16px;
+            transform: translate(-50%, -50%);
+            cursor: pointer;
+            pointer-events: auto;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: transparent;
+          `;
+          const dot = document.createElement('div');
+          dot.style.pointerEvents = 'none';
           if (p.__kind === 'cam') {
             const color = SOURCE_META[(p as CamPoint).source].color;
-            el.style.cssText = `
+            dot.style.cssText = `
               width: 3px; height: 3px;
               background: ${color};
               border-radius: 50%;
-              transform: translate(-50%, -50%);
-              cursor: pointer;
-              pointer-events: auto;
               opacity: 0.85;
+              pointer-events: none;
             `;
-            el.addEventListener('click', (ev) => {
+            hit.addEventListener('click', (ev) => {
               ev.stopPropagation();
               setSelected(p as Camera);
               setSelectedBase(null);
               setSelectedSatId(null);
             });
           } else if (p.__kind === 'base') {
-            el.style.cssText = `
+            dot.style.cssText = `
               width: 5px; height: 5px;
               background: #ef4444;
-              transform: translate(-50%, -50%);
-              cursor: pointer;
-              pointer-events: auto;
               opacity: 0.9;
+              pointer-events: none;
             `;
-            el.addEventListener('click', (ev) => {
+            hit.addEventListener('click', (ev) => {
               ev.stopPropagation();
               setSelectedBase(p as MilitaryBase);
               setSelected(null);
@@ -274,28 +288,30 @@ export default function CameraMap({
             });
           } else {
             const sel = (p as SatPoint).id === selectedSatId;
-            el.style.cssText = `
+            dot.style.cssText = `
               width: ${sel ? 4 : 2}px; height: ${sel ? 4 : 2}px;
               background: ${sel ? '#67e8f9' : '#38f8f8'};
               border-radius: 50%;
-              transform: translate(-50%, -50%);
-              cursor: pointer;
-              pointer-events: auto;
               opacity: ${sel ? 1 : 0.7};
+              pointer-events: none;
             `;
-            el.addEventListener('click', (ev) => {
+            hit.addEventListener('click', (ev) => {
               ev.stopPropagation();
               setSelectedSatId((p as SatPoint).id);
               setSelected(null);
               setSelectedBase(null);
             });
           }
-          return el;
+          hit.appendChild(dot);
+          return hit;
         }}
         // Intentionally do NOT pass htmlElementVisibilityModifier. Without it,
         // three-globe sets obj.visible based on its own behind-the-globe check,
         // and CSS3DRenderer honors that — hiding back-hemisphere dots natively
         // (and freeing us from doing it ourselves).
+        // Disable position tweens — at 10k+ elements the per-frame
+        // interpolation is the dominant CPU cost.
+        htmlTransitionDuration={0}
         pathsData={satTracks}
         pathPoints={(d: object) => d as Array<[number, number, number]>}
         pathPointLat={(pt: object) => (pt as [number, number, number])[1]}

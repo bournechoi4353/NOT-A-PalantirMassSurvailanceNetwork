@@ -10,7 +10,10 @@ import {
   type TleRecord,
 } from '@/lib/satellites';
 
-const UPDATE_HZ = 1; // 1 Hz — see SATELLITES.md.
+// At globe scale (visible from km, not meters), 2 s between updates looks
+// identical to 1 s but halves the React/render cost. Bump back up to 1 if
+// we ever zoom in tight enough to see per-second motion.
+const UPDATE_HZ = 0.5;
 const FETCH_URL = '/api/satellites/starlink';
 
 export type SatTrackSegment = Array<[number, number, number]>;
