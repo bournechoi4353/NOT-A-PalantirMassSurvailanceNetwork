@@ -10,8 +10,9 @@ import {
   type TleRecord,
 } from '@/lib/satellites';
 
-const UPDATE_HZ = 1; // 1 Hz — see SATELLITES.md.
+const UPDATE_MS = 2000; // 0.5 Hz — perf tradeoff for drag responsiveness.
 const FETCH_URL = '/api/satellites/starlink';
+const SAT_SAMPLE_RATE = 5; // keep every 5th sat (~2k of ~10k) — perf.
 
 export type SatTrackSegment = Array<[number, number, number]>;
 
@@ -23,12 +24,15 @@ export type StarlinkState = {
 };
 
 /**
- * Returns live Starlink positions (refreshed at 1 Hz) when `show` is true,
+ * Returns live Starlink positions (refreshed at 0.5 Hz) when `show` is true,
  * otherwise an empty array. Also exposes a `getTrack(id)` that returns the
  * predicted orbital ground track for a single satellite — used by the globe
  * to show where a selected satellite is heading.
  */
-export function useStarlinkPositions(show: boolean): StarlinkState {
+export function useStarlinkPositions(
+  show: boolean,
+  pausedRef?: React.MutableRefObject<boolean>,
+): StarlinkState {
   const [satellites, setSatellites] = useState<Satellite[]>([]);
   const [positions, setPositions] = useState<SatPosition[]>([]);
   const satellitesRef = useRef<Satellite[]>([]);
@@ -43,7 +47,9 @@ export function useStarlinkPositions(show: boolean): StarlinkState {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const json = (await res.json()) as { records: TleRecord[] };
         if (cancelled) return;
-        setSatellites(buildSatellites(json.records));
+        // Downsample BEFORE building — buildSatellites is the expensive step.
+        const sampled = json.records.filter((_, i) => i % SAT_SAMPLE_RATE === 0);
+        setSatellites(buildSatellites(sampled));
       } catch {
         // Silent: globe still works without satellites.
       }
@@ -59,6 +65,9 @@ export function useStarlinkPositions(show: boolean): StarlinkState {
       return;
     }
     const tick = () => {
+      // Skip propagation entirely while the user is dragging the globe —
+      // the drag camera move is at 60 Hz and competing for the main thread.
+      if (pausedRef?.current) return;
       const now = new Date();
       const next: SatPosition[] = [];
       for (const sat of satellitesRef.current) {
@@ -68,9 +77,9 @@ export function useStarlinkPositions(show: boolean): StarlinkState {
       setPositions(next);
     };
     tick();
-    const id = window.setInterval(tick, 1000 / UPDATE_HZ);
+    const id = window.setInterval(tick, UPDATE_MS);
     return () => window.clearInterval(id);
-  }, [show, satellites]);
+  }, [show, satellites, pausedRef]);
 
   const getTrack = useCallback((id: string): SatTrackSegment[] | null => {
     const sat = satellitesRef.current.find((s) => s.id === id);
